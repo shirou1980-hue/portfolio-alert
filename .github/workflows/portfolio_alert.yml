@@ -1,0 +1,28 @@
+name: 📊 포트폴리오 카카오톡 알림
+
+on:
+  schedule:
+    - cron: '0 20 * * *'
+  workflow_dispatch:
+
+jobs:
+  send-portfolio-alert:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 📥 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: 🐍 Python 설치
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 📦 의존성 설치
+        run: pip install requests pytz
+
+      - name: 🚀 포트폴리오 알림 실행
+        env:
+          KAKAO_ACCESS_TOKEN: ${{ secrets.KAKAO_ACCESS_TOKEN }}
+          KAKAO_CLIENT_ID: ${{ secrets.KAKAO_CLIENT_ID }}
+        run: python portfolio_alert.py
