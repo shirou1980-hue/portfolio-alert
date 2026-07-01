@@ -61,7 +61,6 @@ def get_price(ticker: str, is_norway: bool):
         meta = result["meta"]
         current = meta.get("regularMarketPrice", 0)
         
-        # 💡 배당락 왜곡 없는 진짜 직전 거래일 종가(Close) 추출
         close_prices = result.get("indicators", {}).get("quote", [{}])[0].get("close", [])
         valid_closes = [c for c in close_prices if c is not None]
         
@@ -94,9 +93,10 @@ def build_message(us_data, no_data, fx):
     kst = pytz.timezone("Asia/Seoul")
     now = datetime.now(kst).strftime("%m/%d %H:%M")
     
-    lines = [
-        f"📊 포트폴리오 현황 ({now})",
-        f"💱 USD {fx['USDKRW']:,.1f} | NOK {fx['NOKKRW']:,.2f}",
+    # ── [메시지 ①] 미국 주식 전용 ──
+    msg1_lines = [
+        f"📊 포트폴리오 현황 ① ({now})",
+        f"💱 USD {fx['USDKRW']:,.1f}원 | NOK {fx['NOKKRW']:,.2f}원",
         "\n🇺🇸 미국주식 ──────────────"
     ]
     
@@ -109,12 +109,16 @@ def build_message(us_data, no_data, fx):
         profit = eval_amt - cost_amt
         ret_pct = (p["current"] - h["avg_fx"]) / h["avg_fx"] * 100
         us_eval += eval_amt; us_cost += cost_amt
-        
-        # 💡 개별 종목 출력 포맷 최적화 및 금액 단위 만원 표기 (글자 수 획기적 절약)
-        lines.append(f"[{h['ticker']}] {p['current']:.2f} ({pct(p['change_pct'])}) | 수익{pct(ret_pct)}\n  평가 {eval_amt/10000:,.0f}만 ({money(profit)})")
+        msg1_lines.append(f"[{h['ticker']}] {p['current']:.2f} ({pct(p['change_pct'])}) | 수익{pct(ret_pct)}\n  평가 {eval_amt/10000:,.0f}만 ({money(profit)})")
 
     us_ret = (us_eval - us_cost) / us_cost * 100 if us_cost else 0
-    lines += [f"▶ 미국 소계: {us_eval/10000:,.0f}만 ({pct(us_ret)})", "\n🇳🇴 노르웨이주식 ──────────"]
+    msg1_lines.append(f"▶ 미국 소계: {us_eval/10000:,.0f}만 ({pct(us_ret)})")
+    
+    # ── [메시지 ②] 노르웨이 주식 및 합계 ──
+    msg2_lines = [
+        f"📊 포트폴리오 현황 ② ({now})",
+        "\n🇳🇴 노르웨이주식 ──────────"
+    ]
     
     no_eval = no_cost = 0
     for d in no_data:
@@ -125,27 +129,26 @@ def build_message(us_data, no_data, fx):
         profit = eval_amt - cost_amt
         ret_pct = (p["current"] - h["avg_fx"]) / h["avg_fx"] * 100
         no_eval += eval_amt; no_cost += cost_amt
-        
-        lines.append(f"[{h['ticker']}] {p['current']:.1f}K ({pct(p['change_pct'])}) | 수익{pct(ret_pct)}\n  평가 {eval_amt/10000:,.0f}만 ({money(profit)})")
+        msg2_lines.append(f"[{h['ticker']}] {p['current']:.1f}K ({pct(p['change_pct'])}) | 수익{pct(ret_pct)}\n  평가 {eval_amt/10000:,.0f}만 ({money(profit)})")
 
     no_ret = (no_eval - no_cost) / no_cost * 100 if no_cost else 0
-    lines += [f"▶ 노르웨이 소계: {no_eval/10000:,.0f}만 ({pct(no_ret)})", "\n💼 전체 합계 ──────────────"]
+    msg2_lines += [f"▶ 노르웨이 소계: {no_eval/10000:,.0f}만 ({pct(no_ret)})", "\n💼 전체 합계 ──────────────"]
     
     total_eval = us_eval + no_eval
     total_profit = total_eval - (us_cost + no_cost)
     total_ret = total_profit / (us_cost + no_cost) * 100 if (us_cost + no_cost) else 0
     
-    # 최종 합계는 정확한 원단위 표기 유지
-    lines += [
+    msg2_lines += [
         f"총 평가금액: {total_eval:,.0f}원",
         f"총 누적손익: {money(total_profit)}",
         f"총 합산수익률: {pct(total_ret)}"
     ]
-    return "\n".join(lines)
+    
+    return "\n".join(msg1_lines), "\n".join(msg2_lines)
 
 def send_kakao(message: str, token: str):
     template = {"object_type": "text", "text": message, "link": {"web_url": "", "mobile_web_url": ""}}
-    r = requests.post(
+    requests.post(
         "https://kapi.kakao.com/v2/api/talk/memo/default/send",
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/x-www-form-urlencoded"},
         data={"template_object": json.dumps(template, ensure_ascii=False)}, timeout=10
@@ -166,9 +169,13 @@ def main():
         p = get_price(h["ticker"], True)
         if p: no_data.append({"holding": h, "price": p})
             
-    msg = build_message(us_data, no_data, fx)
+    msg1, msg2 = build_message(us_data, no_data, fx)
     token = refresh_kakao_token()
-    if token: send_kakao(msg, token)
+    
+    if token: 
+        send_kakao(msg1, token)
+        time.sleep(1)  # 연속 전송 시 카카오 서버에서 씹히는 현상 방지
+        send_kakao(msg2, token)
 
 if __name__ == "__main__":
     main()
