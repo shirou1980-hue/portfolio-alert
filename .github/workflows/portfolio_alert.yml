@@ -2,7 +2,9 @@ name: 📊 포트폴리오 카카오톡 알림
 
 on:
   schedule:
-    - cron: '0 20 * * *'
+    # 💡 UTC 20:15 = KST 다음날 오전 05:15
+    # 정각('0 20')을 피해서 '15 20'으로 세팅해야 GitHub 서버 지연 없이 5시 15분에 정상 실행됩니다.
+    - cron: '15 20 * * *'
   workflow_dispatch:
 
 jobs:
@@ -25,4 +27,6 @@ jobs:
         env:
           KAKAO_ACCESS_TOKEN: ${{ secrets.KAKAO_ACCESS_TOKEN }}
           KAKAO_CLIENT_ID: ${{ secrets.KAKAO_CLIENT_ID }}
+          # 💡 리프레시 토큰 환경 변수를 반드시 여기에 주입해줘야 매일 새벽 자동으로 토큰을 갱신합니다.
+          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
         run: python portfolio_alert.py
