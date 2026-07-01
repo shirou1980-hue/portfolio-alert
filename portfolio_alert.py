@@ -70,33 +70,35 @@ def get_fx_rates():
 # ─────────────────────────────────────────────
 # 주가 조회 (정확한 당일 변동률 수정한 버전)
 # ─────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# 주가 조회 (장외 시간/시차 오류 완벽 방어 버전)
+# ─────────────────────────────────────────────
 def get_price(ticker: str, is_norway: bool):
     symbol = f"{ticker}.OL" if is_norway else ticker
     try:
-        # 정확한 당일 변동 지표를 얻기 위해 range를 1d로 좁히고 복합 데이터를 요청합니다.
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
+        # 안전하게 5일간의 요약 데이터를 가져오되, 계산은 '직전 마감가'로 정확히 처리합니다.
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=5d"
         r = requests.get(url, headers=HEADERS, timeout=10)
         
-        result = r.json()["chart"]["result"][0]
-        meta = result["meta"]
+        meta = r.json()["chart"]["result"][0]["meta"]
         
-        # 현재가 (또는 장 마감 직후 최종가)
+        # 현재가 (장중 실시간 가격 또는 최종 장마감 가격)
         current = meta.get("regularMarketPrice", 0)
         
-        # Yahoo Finance가 자체 계산해서 제공하는 정확한 '당일 변동 퍼센트'를 우선적으로 가져옵니다.
-        # 데이터가 없을 경우에만 전일 종가 기반으로 수동 계산합니다.
-        if "regularMarketChangePercent" in meta:
-            change_pct = meta["regularMarketChangePercent"]
-        else:
-            prev_close = meta.get("previousClose") or current
-            change_pct = (current - prev_close) / prev_close * 100 if prev_close else 0
+        # 💡 핵심 수정: meta에 들어있는 '진짜 직전 거래일 마감 종가'를 정확히 지정합니다.
+        prev_close = meta.get("previousClose")
+        
+        # 만약 previousClose가 없다면 차트 리스트의 직전 값을 역산합니다.
+        if not prev_close:
+            prev_close = meta.get("chartPreviousClose") or current
             
+        # 정확한 당일 변동률 계산 (어제 종가 대비 오늘 가격)
+        change_pct = (current - prev_close) / prev_close * 100 if prev_close else 0
+        
         return {"current": current, "change_pct": change_pct}
     except Exception as e:
         print(f"  [{ticker}] 조회 실패: {e}")
         return None
-
-
 # ─────────────────────────────────────────────
 # 카카오 토큰 갱신
 # ─────────────────────────────────────────────
