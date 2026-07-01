@@ -67,16 +67,31 @@ def get_fx_rates():
 # ─────────────────────────────────────────────
 # 주가 조회
 # ─────────────────────────────────────────────
+# ─────────────────────────────────────────────
+# 주가 조회 (정확한 당일 변동률 수정한 버전)
+# ─────────────────────────────────────────────
 def get_price(ticker: str, is_norway: bool):
     symbol = f"{ticker}.OL" if is_norway else ticker
     try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=5d"
+        # 정확한 당일 변동 지표를 얻기 위해 range를 1d로 좁히고 복합 데이터를 요청합니다.
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
         r = requests.get(url, headers=HEADERS, timeout=10)
-        meta = r.json()["chart"]["result"][0]["meta"]
-        current    = meta.get("regularMarketPrice", 0)
-        prev_close = meta.get("chartPreviousClose") or meta.get("previousClose") or current
-        change_pct = (current - prev_close) / prev_close * 100 if prev_close else 0
-        return {"current": current, "prev_close": prev_close, "change_pct": change_pct}
+        
+        result = r.json()["chart"]["result"][0]
+        meta = result["meta"]
+        
+        # 현재가 (또는 장 마감 직후 최종가)
+        current = meta.get("regularMarketPrice", 0)
+        
+        # Yahoo Finance가 자체 계산해서 제공하는 정확한 '당일 변동 퍼센트'를 우선적으로 가져옵니다.
+        # 데이터가 없을 경우에만 전일 종가 기반으로 수동 계산합니다.
+        if "regularMarketChangePercent" in meta:
+            change_pct = meta["regularMarketChangePercent"]
+        else:
+            prev_close = meta.get("previousClose") or current
+            change_pct = (current - prev_close) / prev_close * 100 if prev_close else 0
+            
+        return {"current": current, "change_pct": change_pct}
     except Exception as e:
         print(f"  [{ticker}] 조회 실패: {e}")
         return None
