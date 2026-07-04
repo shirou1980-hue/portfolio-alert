@@ -28,7 +28,7 @@ PORTFOLIO = {
     "NO": [
         {"ticker": "PLSV",  "name": "파라투스에너지",     "qty": 2231, "avg_fx": 35.53},
         {"ticker": "SEA1",  "name": "시엠오프쇼어",       "qty": 5595, "avg_fx": 21.99},
-        {"ticker": "NORAM", "name": "Noram Drilling",     "qty": 6251, "avg_fx": 38.25},
+        {"ticker": "NORAM", "name": "Noram Drilling",     "qty": 6514, "avg_fx": 38.2575},
         {"ticker": "WAWI",  "name": "Wallenius",          "qty": 125,  "avg_fx": 129.60},
         {"ticker": "VAR",   "name": "VR Energy",          "qty": 612,  "avg_fx": 45.89},
         {"ticker": "DOFG",  "name": "DOF Group",          "qty": 754,  "avg_fx": 101.90},
