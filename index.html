@@ -3,9 +3,9 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>포트폴리오 배당 캘린더</title>
+    <title>배당 캘린더 (향후 30일)</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 15px; background: #f0f2f5; color: #333; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 16px; background: #f0f2f5; color: #333; }
         .container { max-width: 950px; margin: auto; background: white; padding: 24px; border-radius: 14px; box-shadow: 0 4px 14px rgba(0,0,0,0.06); }
         h1 { font-size: 20px; margin: 0 0 6px 0; }
         .updated { font-size: 13px; color: #777; margin-bottom: 18px; }
@@ -21,14 +21,15 @@
         .badge.no { background: #feebc8; color: #7b341e; }
         .badge.today { background: #fee2e2; color: #b91c1c; border: 1px solid #f87171; }
         .badge.d-future { background: #dbeafe; color: #1e40af; }
-        .badge.d-past { background: #f3f4f6; color: #9ca3af; }
+        .tag-est { font-size: 11px; color: #ea580c; font-weight: normal; }
+        .tag-conf { font-size: 11px; color: #16a34a; font-weight: normal; }
         .ticker { font-family: monospace; font-size: 14px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>📅 포트폴리오 배당 캘린더 (-30일 ~ +45일)</h1>
-        <div class="updated">최근 업데이트: 2026-09-17 23:06 (KST)</div>
+        <h1>📅 포트폴리오 배당 캘린더 (향후 30일 예정)</h1>
+        <div class="updated">최근 업데이트: 2026-09-17 23:13 (KST)</div>
         <div class="table-wrap">
             <table>
                 <thead>
@@ -46,14 +47,58 @@
                 <tbody>
                     
         <tr>
-            <td class="ticker"><b>TSM</b></td>
-            <td>TSMC</td>
+            <td class="ticker"><b>NORAM</b></td>
+            <td>Noram Drilling AS <span class="tag-est">(예상)</span></td>
+            <td><span class="badge no">NO</span></td>
+            <td>2026-09-17</td>
+            <td><span class="badge today">오늘 배당락!</span></td>
+            <td class="num">0.42 NOK</td>
+            <td class="num">6,514주</td>
+            <td class="num bold">332,896원</td>
+        </tr>
+        
+        <tr>
+            <td class="ticker"><b>QYLD</b></td>
+            <td>글로벌엑스 커버드콜 ETF <span class="tag-est">(예상)</span></td>
             <td><span class="badge us">US</span></td>
-            <td>2026-09-16</td>
-            <td><span class="badge d-past">종료 (1일전)</span></td>
-            <td class="num">1.11 USD</td>
-            <td class="num">31주</td>
-            <td class="num bold">40,270원</td>
+            <td>2026-09-23</td>
+            <td><span class="badge d-future">D-6</span></td>
+            <td class="num">0.18 USD</td>
+            <td class="num">1,664주</td>
+            <td class="num bold">357,239원</td>
+        </tr>
+        
+        <tr>
+            <td class="ticker"><b>O</b></td>
+            <td>리얼티 인컴 <span class="tag-est">(예상)</span></td>
+            <td><span class="badge us">US</span></td>
+            <td>2026-09-30</td>
+            <td><span class="badge d-future">D-13</span></td>
+            <td class="num">0.27 USD</td>
+            <td class="num">600주</td>
+            <td class="num bold">190,755원</td>
+        </tr>
+        
+        <tr>
+            <td class="ticker"><b>JEPI</b></td>
+            <td>JP모건 에쿼티 프리미엄 <span class="tag-est">(예상)</span></td>
+            <td><span class="badge us">US</span></td>
+            <td>2026-10-01</td>
+            <td><span class="badge d-future">D-14</span></td>
+            <td class="num">0.37 USD</td>
+            <td class="num">200주</td>
+            <td class="num bold">87,048원</td>
+        </tr>
+        
+        <tr>
+            <td class="ticker"><b>SEA1</b></td>
+            <td>시1 오프쇼어 <span class="tag-est">(예상)</span></td>
+            <td><span class="badge no">NO</span></td>
+            <td>2026-10-06</td>
+            <td><span class="badge d-future">D-19</span></td>
+            <td class="num">4.00 NOK</td>
+            <td class="num">7,054주</td>
+            <td class="num bold">3,400,874원</td>
         </tr>
         
                 </tbody>
