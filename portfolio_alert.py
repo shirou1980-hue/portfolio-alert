@@ -27,9 +27,9 @@ PORTFOLIO = {
         "HCC": {"name": "워리어 멧 콜", "shares": 51, "book_krw": 6552941},
     },
     "NO": {
-        "PLSV.OL": {"name": "파라투스 에너지", "shares": 2231, "book_krw": 10913955},
+        "PLSV.OL": {"name": "파라투스 에너지 서비시스", "shares": 2231, "book_krw": 10913955},
         "SEA1.OL": {"name": "시1 오프쇼어", "shares": 7054, "book_krw": 21859180},
-        "NORAM.OL": {"name": "Noram Drilling", "shares": 6514, "book_krw": 31673808},
+        "NORAM.OL": {"name": "Noram Drilling AS", "shares": 6514, "book_krw": 31673808},
         "WAWI.OL": {"name": "WALLENIUS WILHELMSEN", "shares": 125, "book_krw": 2435832},
         "VAR.OL": {"name": "VR ENERGY AS", "shares": 612, "book_krw": 4455915},
         "DOFG.OL": {"name": "DOF Group ASA", "shares": 754, "book_krw": 10871813},
@@ -45,10 +45,9 @@ HEADERS = {
 }
 
 # ─────────────────────────────────────────────
-# 정밀 환율 및 시세 수집 함수
+# 정밀 환율 및 시세 수집
 # ─────────────────────────────────────────────
 def get_fx_rates():
-    """하나은행/네이버 기준환율에 근접한 야후 FX 정밀 수신"""
     rates = {"USDKRW": 1390.0, "NOKKRW": 130.0}
     for key, symbol in [("USDKRW", "USDKRW=X"), ("NOKKRW", "NOKKRW=X")]:
         try:
@@ -56,29 +55,38 @@ def get_fx_rates():
             r = requests.get(url, headers=HEADERS, timeout=10)
             meta = r.json()["chart"]["result"][0]["meta"]
             price = meta.get("regularMarketPrice") or meta.get("previousClose")
-            if price:
+            if price and float(price) > 0:
                 rates[key] = float(price)
         except Exception as e:
             print(f"환율 수신 경고({key}): {e}")
     return rates
 
-def get_price_precise(symbol: str):
-    """정규장/시간외/종가 우선순위를 두어 실시간 단가 오차 최소화"""
+def get_price(symbol: str, is_norway: bool = False):
     try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1m&range=1d"
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=5d"
         r = requests.get(url, headers=HEADERS, timeout=10)
         result = r.json()["chart"]["result"][0]
         meta = result["meta"]
         
-        # 1. 정규장 현재가 -> 시간외 가격 -> 전일 종가 순으로 유효값 추출
+        # 1. 가격 추출 (정규장가 -> 시간외 -> 최근 종가)
         current = meta.get("regularMarketPrice")
         if not current:
-            current = meta.get("postMarketPrice") or meta.get("chartPreviousClose") or 0.0
+            current = meta.get("chartPreviousClose") or meta.get("previousClose") or 0.0
+        current = float(current)
 
         prev_close = meta.get("chartPreviousClose") or meta.get("previousClose") or current
+        prev_close = float(prev_close)
+
+        # 2. 노르웨이 종목 오레(Øre) 단위 왜곡 보정 (100배 튀는 현상 방지)
+        # 통화 단위가 GBp(펜스)처럼 오레 단위로 잡혀 단가가 비정상적으로 높게 들어오는 경우
+        currency = meta.get("currency", "")
+        if is_norway:
+            if currency.lower() in ["øre", "ore"] or current > 1500:
+                current /= 100.0
+                prev_close /= 100.0
+
         change_pct = ((current - prev_close) / prev_close * 100) if prev_close else 0.0
-        
-        return {"current": float(current), "change_pct": float(change_pct)}
+        return {"current": current, "change_pct": change_pct}
     except Exception as e:
         print(f"  [{symbol}] 시세 조회 실패: {e}")
         return None
@@ -181,19 +189,19 @@ def send_kakao(message: str, token: str):
 
 def main():
     fx = get_fx_rates()
-    print(f"적용 환율: USD={fx['USDKRW']}, NOK={fx['NOKKRW']}")
+    print(f"적용 환율: USD={fx['USDKRW']:.2f}원, NOK={fx['NOKKRW']:.2f}원")
     
     us_data = []
     for ticker, info in PORTFOLIO["US"].items():
         time.sleep(0.15)
-        p = get_price_precise(ticker)
+        p = get_price(ticker, is_norway=False)
         if p:
             us_data.append({"ticker": ticker, "holding": info, "price": p})
             
     no_data = []
     for ticker, info in PORTFOLIO["NO"].items():
         time.sleep(0.15)
-        p = get_price_precise(ticker)
+        p = get_price(ticker, is_norway=True)
         if p:
             no_data.append({"ticker": ticker, "holding": info, "price": p})
             
@@ -204,7 +212,7 @@ def main():
         send_kakao(msg1, token)
         time.sleep(1)
         send_kakao(msg2, token)
-        print("전송 완료")
+        print("카카오톡 전송 완료")
 
 if __name__ == "__main__":
     main()
