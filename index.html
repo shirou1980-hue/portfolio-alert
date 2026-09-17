@@ -3,29 +3,32 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>배당 캘린더 대시보드</title>
+    <title>포트폴리오 배당 캘린더</title>
     <style>
-        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; background: #f4f6f9; color: #333; }
-        .container { max-width: 900px; margin: auto; background: white; padding: 24px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }
-        h1 { font-size: 22px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
-        .updated { font-size: 13px; color: #777; margin-bottom: 20px; }
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 15px; background: #f0f2f5; color: #333; }
+        .container { max-width: 950px; margin: auto; background: white; padding: 24px; border-radius: 14px; box-shadow: 0 4px 14px rgba(0,0,0,0.06); }
+        h1 { font-size: 20px; margin: 0 0 6px 0; }
+        .updated { font-size: 13px; color: #777; margin-bottom: 18px; }
         .table-wrap { overflow-x: auto; }
-        table { width: 100%; border-collapse: collapse; font-size: 14px; text-align: left; }
-        th, td { padding: 12px 10px; border-bottom: 1px solid #edf0f5; }
-        th { background: #fafbfc; color: #666; font-weight: 600; }
-        tr:hover { background: #f9fbfd; }
-        .num { text-align: right; }
-        .bold { font-weight: bold; color: #2b6cb0; }
-        .badge { padding: 3px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; }
+        table { width: 100%; border-collapse: collapse; font-size: 13.5px; text-align: left; }
+        th, td { padding: 11px 8px; border-bottom: 1px solid #edf0f5; }
+        th { background: #fafbfc; color: #555; font-weight: 600; white-space: nowrap; }
+        tr:hover { background: #f8faff; }
+        .num { text-align: right; white-space: nowrap; }
+        .bold { font-weight: bold; color: #1a56db; }
+        .badge { display: inline-block; padding: 3px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; white-space: nowrap; }
         .badge.us { background: #e2e8f0; color: #2d3748; }
         .badge.no { background: #feebc8; color: #7b341e; }
-        .ticker { font-family: monospace; font-size: 15px; }
+        .badge.today { background: #fee2e2; color: #b91c1c; border: 1px solid #f87171; }
+        .badge.d-future { background: #dbeafe; color: #1e40af; }
+        .badge.d-past { background: #f3f4f6; color: #9ca3af; }
+        .ticker { font-family: monospace; font-size: 14px; }
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>📅 포트폴리오 배당 캘린더</h1>
-        <div class="updated">최근 업데이트: 2026-09-17 22:57 (KST)</div>
+        <h1>📅 포트폴리오 배당 캘린더 (-30일 ~ +45일)</h1>
+        <div class="updated">최근 업데이트: 2026-09-17 23:04 (KST)</div>
         <div class="table-wrap">
             <table>
                 <thead>
@@ -34,6 +37,7 @@
                         <th>종목명</th>
                         <th>국가</th>
                         <th>배당락일</th>
+                        <th>D-Day</th>
                         <th class="num">주당 배당금</th>
                         <th class="num">보유수량</th>
                         <th class="num">예상 세후 배당금</th>
@@ -46,9 +50,10 @@
             <td>TSMC</td>
             <td><span class="badge us">US</span></td>
             <td>2026-09-16</td>
+            <td><span class="badge d-past">종료 (1일전)</span></td>
             <td class="num">1.11 USD</td>
             <td class="num">31주</td>
-            <td class="num bold">40,280원</td>
+            <td class="num bold">40,264원</td>
         </tr>
         
                 </tbody>
