@@ -2,7 +2,7 @@ import requests
 import json
 import os
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import pytz
 
 # ─────────────────────────────────────────────
@@ -36,7 +36,6 @@ PORTFOLIO = {
     }
 }
 
-# 깃허브 페이지 주소 (본인 깃허브 아이디로 변경)
 PAGES_URL = "https://shirou1980-hue.github.io/portfolio-alert/"
 
 KAKAO_ACCESS_TOKEN  = os.environ.get("KAKAO_ACCESS_TOKEN", "")
@@ -47,6 +46,9 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 }
 
+# ─────────────────────────────────────────────
+# 환율 하이브리드 수집 (USD: 야후 실시간, NOK: 네이버 매매기준율)
+# ─────────────────────────────────────────────
 def get_fx_rates():
     rates = {"USDKRW": 1450.0, "NOKKRW": 141.8}
     try:
@@ -66,44 +68,67 @@ def get_fx_rates():
 
     return rates
 
+# ─────────────────────────────────────────────
+# 주가 및 미래/과거 배당 데이터 종합 파싱
+# ─────────────────────────────────────────────
 def get_stock_data(symbol: str):
+    clean_sym = symbol.replace(".OL", "")
+    data = {
+        "current": 0.0,
+        "change_pct": 0.0,
+        "dps": 0.0,
+        "ex_date": "-"
+    }
+    
+    # 1. 시세 및 1차 배당 확인 (Chart v8)
     try:
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=5d&events=div"
-        r = requests.get(url, headers=HEADERS, timeout=10)
-        res = r.json()["chart"]["result"][0]
-        meta = res["meta"]
-        
-        current = meta.get("regularMarketPrice", 0.0)
-        close_prices = res.get("indicators", {}).get("quote", [{}])[0].get("close", [])
-        valid_closes = [c for c in close_prices if c is not None]
-        
-        if len(valid_closes) >= 2:
-            prev_close = valid_closes[-2]
-        else:
-            prev_close = meta.get("previousClose") or current
-            
-        change_pct = ((current - prev_close) / prev_close * 100) if prev_close else 0.0
-        
-        events = res.get("events", {}).get("dividends", {})
-        dps = 0.0
-        ex_date_str = "-"
-        
+        url_c = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=5d&events=div"
+        rc = requests.get(url_c, headers=HEADERS, timeout=10).json()
+        res_c = rc["chart"]["result"][0]
+        meta_c = res_c["meta"]
+
+        data["current"] = float(meta_c.get("regularMarketPrice", 0.0))
+        closes = [c for c in res_c.get("indicators", {}).get("quote", [{}])[0].get("close", []) if c is not None]
+        prev_close = closes[-2] if len(closes) >= 2 else (meta_c.get("previousClose") or data["current"])
+        data["change_pct"] = ((data["current"] - prev_close) / prev_close * 100) if prev_close else 0.0
+
+        # 과거 30일 이내 배당 이벤트 확인
+        events = res_c.get("events", {}).get("dividends", {})
         if events:
             latest_ts = sorted(events.keys(), reverse=True)[0]
-            dps = float(events[latest_ts].get("amount", 0.0))
-            ex_date_str = datetime.fromtimestamp(int(latest_ts), tz=timezone.utc).strftime("%Y-%m-%d")
-        elif meta.get("exDividendDate"):
-            ex_date_str = datetime.fromtimestamp(meta["exDividendDate"], tz=timezone.utc).strftime("%Y-%m-%d")
-
-        return {
-            "current": float(current),
-            "change_pct": float(change_pct),
-            "dps": dps,
-            "ex_date": ex_date_str
-        }
+            data["dps"] = float(events[latest_ts].get("amount", 0.0))
+            data["ex_date"] = datetime.fromtimestamp(int(latest_ts), tz=timezone.utc).strftime("%Y-%m-%d")
+        elif meta_c.get("exDividendDate"):
+            data["ex_date"] = datetime.fromtimestamp(meta_c["exDividendDate"], tz=timezone.utc).strftime("%Y-%m-%d")
     except Exception as e:
-        print(f"  [{symbol}] 조회 실패: {e}")
-        return None
+        print(f"  [{symbol}] 차트 데이터 조회 예외: {e}")
+
+    # 2. 미래 공시 일정 및 통계 배당단가 확인 (quoteSummary v10)
+    try:
+        url_s = f"https://query1.finance.yahoo.com/v10/finance/quoteSummary/{symbol}?modules=calendarEvents,summaryDetail"
+        rs = requests.get(url_s, headers=HEADERS, timeout=10)
+        if rs.status_code == 200:
+            summary = rs.json().get("quoteSummary", {}).get("result", [{}])[0]
+            cal = summary.get("calendarEvents", {})
+            detail = summary.get("summaryDetail", {})
+
+            # 미래 배당락일 우선 반영
+            ex_date_dict = cal.get("exDividendDate", {}) or detail.get("exDividendDate", {})
+            ex_ts = ex_date_dict.get("raw")
+            if ex_ts:
+                data["ex_date"] = datetime.fromtimestamp(ex_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+
+            # 연간 배당금 기반 분기/월 배당 단가 환산 (기본 단가가 없을 경우 보완)
+            annual_rate = detail.get("dividendRate", {}).get("raw", 0.0)
+            if annual_rate and annual_rate > 0 and data["dps"] == 0.0:
+                if clean_sym in ["O", "QYLD", "JEPI"]:
+                    data["dps"] = annual_rate / 12.0
+                else:
+                    data["dps"] = annual_rate / 4.0
+    except Exception as e:
+        print(f"  [{symbol}] 캘린더 요약 조회 예외: {e}")
+
+    return data
 
 def refresh_kakao_token():
     if not KAKAO_REFRESH_TOKEN or not KAKAO_CLIENT_ID: 
@@ -115,7 +140,7 @@ def refresh_kakao_token():
             "refresh_token": KAKAO_REFRESH_TOKEN,
         }, timeout=10)
         return r.json().get("access_token", KAKAO_ACCESS_TOKEN)
-    except Exception:
+    except:
         return KAKAO_ACCESS_TOKEN
 
 def arrow(v): return "🔺" if v >= 0 else "🔻"
@@ -123,50 +148,62 @@ def pct(v):   return f"{arrow(v)}{abs(v):.2f}%"
 def money(v): return f"{'+' if v >= 0 else '-'}{abs(v):,.0f}원"
 
 # ─────────────────────────────────────────────
-# 반응형 HTML 캘린더 생성기
+# 고도화된 HTML 배당 캘린더 생성 (D-Day 배지 지원)
 # ─────────────────────────────────────────────
 def generate_html_calendar(calendar_rows, update_time):
     rows_html = ""
     for r in calendar_rows:
+        d_day_val = r["d_day"]
+        if d_day_val == 0:
+            d_badge = '<span class="badge today">오늘 배당락</span>'
+        elif d_day_val > 0:
+            d_badge = f'<span class="badge d-future">D-{d_day_val}</span>'
+        else:
+            d_badge = f'<span class="badge d-past">종료 ({abs(d_day_val)}일전)</span>'
+
         rows_html += f"""
         <tr>
             <td class="ticker"><b>{r['ticker']}</b></td>
             <td>{r['name']}</td>
             <td><span class="badge {r['market'].lower()}">{r['market']}</span></td>
             <td>{r['ex_date']}</td>
+            <td>{d_badge}</td>
             <td class="num">{r['dps']:.2f} {r['curr']}</td>
             <td class="num">{r['shares']:,}주</td>
             <td class="num bold">{r['net_krw']:,.0f}원</td>
         </tr>
         """
-        
+
     html = f"""<!DOCTYPE html>
 <html lang="ko">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>배당 캘린더 대시보드</title>
+    <title>포트폴리오 배당 캘린더</title>
     <style>
-        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 20px; background: #f4f6f9; color: #333; }}
-        .container {{ max-width: 900px; margin: auto; background: white; padding: 24px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.08); }}
-        h1 {{ font-size: 22px; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }}
-        .updated {{ font-size: 13px; color: #777; margin-bottom: 20px; }}
+        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 15px; background: #f0f2f5; color: #333; }}
+        .container {{ max-width: 950px; margin: auto; background: white; padding: 24px; border-radius: 14px; box-shadow: 0 4px 14px rgba(0,0,0,0.06); }}
+        h1 {{ font-size: 20px; margin: 0 0 6px 0; }}
+        .updated {{ font-size: 13px; color: #777; margin-bottom: 18px; }}
         .table-wrap {{ overflow-x: auto; }}
-        table {{ width: 100%; border-collapse: collapse; font-size: 14px; text-align: left; }}
-        th, td {{ padding: 12px 10px; border-bottom: 1px solid #edf0f5; }}
-        th {{ background: #fafbfc; color: #666; font-weight: 600; }}
-        tr:hover {{ background: #f9fbfd; }}
-        .num {{ text-align: right; }}
-        .bold {{ font-weight: bold; color: #2b6cb0; }}
-        .badge {{ padding: 3px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; }}
+        table {{ width: 100%; border-collapse: collapse; font-size: 13.5px; text-align: left; }}
+        th, td {{ padding: 11px 8px; border-bottom: 1px solid #edf0f5; }}
+        th {{ background: #fafbfc; color: #555; font-weight: 600; white-space: nowrap; }}
+        tr:hover {{ background: #f8faff; }}
+        .num {{ text-align: right; white-space: nowrap; }}
+        .bold {{ font-weight: bold; color: #1a56db; }}
+        .badge {{ display: inline-block; padding: 3px 6px; border-radius: 4px; font-size: 11px; font-weight: bold; white-space: nowrap; }}
         .badge.us {{ background: #e2e8f0; color: #2d3748; }}
         .badge.no {{ background: #feebc8; color: #7b341e; }}
-        .ticker {{ font-family: monospace; font-size: 15px; }}
+        .badge.today {{ background: #fee2e2; color: #b91c1c; border: 1px solid #f87171; }}
+        .badge.d-future {{ background: #dbeafe; color: #1e40af; }}
+        .badge.d-past {{ background: #f3f4f6; color: #9ca3af; }}
+        .ticker {{ font-family: monospace; font-size: 14px; }}
     </style>
 </head>
 <body>
     <div class="container">
-        <h1>📅 포트폴리오 배당 캘린더</h1>
+        <h1>📅 포트폴리오 배당 캘린더 (-30일 ~ +45일)</h1>
         <div class="updated">최근 업데이트: {update_time} (KST)</div>
         <div class="table-wrap">
             <table>
@@ -176,6 +213,7 @@ def generate_html_calendar(calendar_rows, update_time):
                         <th>종목명</th>
                         <th>국가</th>
                         <th>배당락일</th>
+                        <th>D-Day</th>
                         <th class="num">주당 배당금</th>
                         <th class="num">보유수량</th>
                         <th class="num">예상 세후 배당금</th>
@@ -200,8 +238,8 @@ def generate_html_calendar(calendar_rows, update_time):
 def build_messages(us_data, no_data, fx, today_str, calendar_rows):
     kst = pytz.timezone("Asia/Seoul")
     now = datetime.now(kst).strftime("%m/%d %H:%M")
-    
-    # ── [메시지 ①] 미국 주식 현황 ──
+
+    # [메시지 ①] 미국 주식 현황
     msg1_lines = [
         f"📊 포트폴리오 현황 ① ({now})",
         f"💱 USD {fx['USDKRW']:,.1f}원 | NOK {fx['NOKKRW']:,.2f}원",
@@ -223,7 +261,7 @@ def build_messages(us_data, no_data, fx, today_str, calendar_rows):
     us_ret = ((us_eval - us_cost) / us_cost * 100) if us_cost else 0
     msg1_lines.append(f"▶ 미국 소계: {us_eval/10000:,.0f}만 ({pct(us_ret)})")
 
-    # ── [메시지 ②] 노르웨이 주식 및 합산 ──
+    # [메시지 ②] 노르웨이 주식 및 계좌 합산
     msg2_lines = [
         f"📊 포트폴리오 현황 ② ({now})",
         "\n🇳🇴 노르웨이주식 ──────────"
@@ -256,32 +294,31 @@ def build_messages(us_data, no_data, fx, today_str, calendar_rows):
         f"총 합산수익률: {pct(total_ret)}"
     ]
 
-    # ── [메시지 ③] 배당 알림 + 링크 첨부 ──
-    all_stocks = us_data + no_data
-    today_div_alerts = []
-    for item in all_stocks:
-        ticker = item["ticker"].replace(".OL", "")
-        d = item["data"]
-        curr = "USD" if item["market"] == "US" else "NOK"
-        fx_val = fx["USDKRW"] if item["market"] == "US" else fx["NOKKRW"]
-        if d["ex_date"] == today_str and d["dps"] > 0:
-            net = d["dps"] * item["holding"]["shares"] * fx_val * 0.85
-            today_div_alerts.append(
-                f"📌 [{ticker}] {item['holding']['name']} 배당락일\n"
-                f"• 보유: {item['holding']['shares']:,}주 | 주당: {d['dps']:.2f}{curr}\n"
-                f"• 예상 세후 배당금: {net:,.0f}원"
-            )
+    # [메시지 ③] 배당 알림 및 링크
+    today_alerts = [r for r in calendar_rows if r["d_day"] == 0]
+    future_alerts = [r for r in calendar_rows if r["d_day"] > 0]
 
     msg3_lines = []
-    if today_div_alerts:
-        msg3_lines = [f"🔔 [오늘 배당락 알림] ({today_str})", "──────────────"] + today_div_alerts
+    if today_alerts:
+        msg3_lines.append(f"🔔 [오늘 배당락 알림] ({today_str})")
+        msg3_lines.append("──────────────")
+        for a in today_alerts:
+            msg3_lines.append(
+                f"📌 [{a['ticker']}] {a['name']} 오늘 배당락!\n"
+                f"• 보유: {a['shares']:,}주 | 주당 {a['dps']:.2f}{a['curr']}\n"
+                f"• 예상 세후 배당금: {a['net_krw']:,.0f}원"
+            )
     else:
-        msg3_lines = [f"📅 [최근 배당 스케줄 요약]", "──────────────"]
-        for u in calendar_rows[:4]:
-            msg3_lines.append(f"• {u['ticker']} ({u['ex_date']}): 주당 {u['dps']:.2f}{u['curr']} | 약 {u['net_krw']/10000:,.1f}만")
+        msg3_lines.append(f"📅 [다가오는 배당 스케줄]")
+        msg3_lines.append("──────────────")
+        if future_alerts:
+            for f in future_alerts[:4]:
+                msg3_lines.append(f"• [{f['ticker']}] {f['ex_date']} (D-{f['d_day']}): 약 {f['net_krw']/10000:,.1f}만원")
+        else:
+            msg3_lines.append("예정된 배당 일정이 없습니다.")
 
     msg3_lines += [
-        "\n🔗 전체 배당 캘린더 웹페이지:",
+        "\n🔗 전체 배당 캘린더 대시보드:",
         PAGES_URL
     ]
 
@@ -296,64 +333,80 @@ def send_kakao(message: str, token: str):
         timeout=10
     )
 
+# ─────────────────────────────────────────────
+# 메인 실행부
+# ─────────────────────────────────────────────
 def main():
     kst = pytz.timezone("Asia/Seoul")
     now_dt = datetime.now(kst)
     today_str = now_dt.strftime("%Y-%m-%d")
     now_str = now_dt.strftime("%Y-%m-%d %H:%M")
-    
+    today_date = now_dt.date()
+
     fx = get_fx_rates()
     print(f"[{today_str}] 환율: USD={fx['USDKRW']:,.1f}원 | NOK={fx['NOKKRW']:,.2f}원")
-    
+
     us_data = []
     for ticker, info in PORTFOLIO["US"].items():
-        time.sleep(0.15)
+        time.sleep(0.1)
         d = get_stock_data(ticker)
         if d:
             us_data.append({"ticker": ticker, "holding": info, "data": d, "market": "US"})
-            
+
     no_data = []
     for ticker, info in PORTFOLIO["NO"].items():
-        time.sleep(0.15)
+        time.sleep(0.1)
         d = get_stock_data(ticker)
         if d:
             no_data.append({"ticker": ticker, "holding": info, "data": d, "market": "NO"})
 
-    # 배당 캘린더 행 구성
+    # 배당 캘린더 범위 필터링 (-30일 ~ +45일)
     calendar_rows = []
     for item in us_data + no_data:
         ticker = item["ticker"].replace(".OL", "")
         d = item["data"]
         curr = "USD" if item["market"] == "US" else "NOK"
         fx_val = fx["USDKRW"] if item["market"] == "US" else fx["NOKKRW"]
-        if d["ex_date"] != "-":
-            net_krw = d["dps"] * item["holding"]["shares"] * fx_val * 0.85
-            calendar_rows.append({
-                "ticker": ticker,
-                "name": item["holding"]["name"],
-                "market": item["market"],
-                "ex_date": d["ex_date"],
-                "dps": d["dps"],
-                "curr": curr,
-                "shares": item["holding"]["shares"],
-                "net_krw": net_krw
-            })
-    calendar_rows.sort(key=lambda x: x["ex_date"], reverse=True)
 
-    # 1. HTML 캘린더 파일 생성
+        if d["ex_date"] != "-":
+            try:
+                ex_dt = datetime.strptime(d["ex_date"], "%Y-%m-%d").date()
+                diff_days = (ex_dt - today_date).days
+
+                # 과거 30일 ~ 미래 45일 범위인 종목만 수집
+                if -30 <= diff_days <= 45:
+                    net_krw = d["dps"] * item["holding"]["shares"] * fx_val * 0.85
+                    calendar_rows.append({
+                        "ticker": ticker,
+                        "name": item["holding"]["name"],
+                        "market": item["market"],
+                        "ex_date": d["ex_date"],
+                        "d_day": diff_days,
+                        "dps": d["dps"],
+                        "curr": curr,
+                        "shares": item["holding"]["shares"],
+                        "net_krw": net_krw
+                    })
+            except:
+                pass
+
+    # 다가오는 날짜순 (D-Day 오름차순: 오늘/미래 일정 먼저, 지난 일정 나중)
+    calendar_rows.sort(key=lambda x: (x["d_day"] < 0, x["d_day"]))
+
+    # 1. HTML 캘린더 웹페이지 생성
     generate_html_calendar(calendar_rows, now_str)
 
     # 2. 카카오톡 메시지 전송
     msg1, msg2, msg3 = build_messages(us_data, no_data, fx, today_str, calendar_rows)
     token = refresh_kakao_token()
-    
+
     if token:
         send_kakao(msg1, token)
         time.sleep(1)
         send_kakao(msg2, token)
         time.sleep(1)
         send_kakao(msg3, token)
-        print("카카오톡 메시지 전송 완료!")
+        print("모든 카카오톡 포트폴리오 및 배당 메시지 전송 완료!")
 
 if __name__ == "__main__":
     main()
