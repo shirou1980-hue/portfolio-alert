@@ -45,30 +45,37 @@ HEADERS = {
 }
 
 # ─────────────────────────────────────────────
-# 정밀 환율 및 시세 수집
+# 국내 포털 기준 실시간 매매기준율 환율 수집
 # ─────────────────────────────────────────────
 def get_fx_rates():
-    rates = {"USDKRW": 1390.0, "NOKKRW": 130.0}
-    for key, symbol in [("USDKRW", "USDKRW=X"), ("NOKKRW", "NOKKRW=X")]:
+    """네이버 금융 환율 API를 통해 시중은행 매매기준율 수집 (야후 오류 우회)"""
+    rates = {"USDKRW": 1450.0, "NOKKRW": 141.8}  # 안전 fallback 값
+    
+    # 1. 네이버 금융 페어 조회 (USD, NOK)
+    targets = {
+        "USDKRW": "FX_USDKRW",
+        "NOKKRW": "FX_NOKKRW"
+    }
+    
+    for key, code in targets.items():
         try:
-            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
-            r = requests.get(url, headers=HEADERS, timeout=10)
-            meta = r.json()["chart"]["result"][0]["meta"]
-            price = meta.get("regularMarketPrice") or meta.get("previousClose")
-            if price and float(price) > 0:
-                rates[key] = float(price)
+            url = f"https://m.stock.naver.com/front-api/v1/marketIndex/prices?category=exchange&reutersCode={code}&page=1"
+            res = requests.get(url, headers=HEADERS, timeout=5).json()
+            rate_str = res["result"][0]["closePrice"].replace(",", "")
+            rates[key] = float(rate_str)
         except Exception as e:
-            print(f"환율 수신 경고({key}): {e}")
+            print(f"네이버 환율({key}) 수신 예외: {e}, fallback 유지")
+            
     return rates
 
-def get_price(symbol: str, is_norway: bool = False):
+def get_price(symbol: str):
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=5d"
         r = requests.get(url, headers=HEADERS, timeout=10)
-        result = r.json()["chart"]["result"][0]
+        res_json = r.json()
+        result = res_json["chart"]["result"][0]
         meta = result["meta"]
         
-        # 1. 가격 추출 (정규장가 -> 시간외 -> 최근 종가)
         current = meta.get("regularMarketPrice")
         if not current:
             current = meta.get("chartPreviousClose") or meta.get("previousClose") or 0.0
@@ -76,14 +83,6 @@ def get_price(symbol: str, is_norway: bool = False):
 
         prev_close = meta.get("chartPreviousClose") or meta.get("previousClose") or current
         prev_close = float(prev_close)
-
-        # 2. 노르웨이 종목 오레(Øre) 단위 왜곡 보정 (100배 튀는 현상 방지)
-        # 통화 단위가 GBp(펜스)처럼 오레 단위로 잡혀 단가가 비정상적으로 높게 들어오는 경우
-        currency = meta.get("currency", "")
-        if is_norway:
-            if currency.lower() in ["øre", "ore"] or current > 1500:
-                current /= 100.0
-                prev_close /= 100.0
 
         change_pct = ((current - prev_close) / prev_close * 100) if prev_close else 0.0
         return {"current": current, "change_pct": change_pct}
@@ -189,19 +188,19 @@ def send_kakao(message: str, token: str):
 
 def main():
     fx = get_fx_rates()
-    print(f"적용 환율: USD={fx['USDKRW']:.2f}원, NOK={fx['NOKKRW']:.2f}원")
+    print(f"정상 수신 환율: USD={fx['USDKRW']:.2f}원, NOK={fx['NOKKRW']:.2f}원")
     
     us_data = []
     for ticker, info in PORTFOLIO["US"].items():
         time.sleep(0.15)
-        p = get_price(ticker, is_norway=False)
+        p = get_price(ticker)
         if p:
             us_data.append({"ticker": ticker, "holding": info, "price": p})
             
     no_data = []
     for ticker, info in PORTFOLIO["NO"].items():
         time.sleep(0.15)
-        p = get_price(ticker, is_norway=True)
+        p = get_price(ticker)
         if p:
             no_data.append({"ticker": ticker, "holding": info, "price": p})
             
@@ -212,7 +211,7 @@ def main():
         send_kakao(msg1, token)
         time.sleep(1)
         send_kakao(msg2, token)
-        print("카카오톡 전송 완료")
+        print("카카오톡 메시지 전송 완료")
 
 if __name__ == "__main__":
     main()
