@@ -45,47 +45,57 @@ HEADERS = {
 }
 
 # ─────────────────────────────────────────────
-# 국내 포털 기준 실시간 매매기준율 환율 수집
+# 환율 하이브리드 수집 (USD=야후 실시간, NOK=네이버 매매기준율)
 # ─────────────────────────────────────────────
 def get_fx_rates():
-    """네이버 금융 환율 API를 통해 시중은행 매매기준율 수집 (야후 오류 우회)"""
-    rates = {"USDKRW": 1450.0, "NOKKRW": 141.8}  # 안전 fallback 값
+    rates = {"USDKRW": 1450.0, "NOKKRW": 141.8}
     
-    # 1. 네이버 금융 페어 조회 (USD, NOK)
-    targets = {
-        "USDKRW": "FX_USDKRW",
-        "NOKKRW": "FX_NOKKRW"
-    }
-    
-    for key, code in targets.items():
+    # 1. USD: 야후 파이낸스 실시간 시장 환율 (증권사 야간 실시간 평가용)
+    try:
+        url_usd = "https://query1.finance.yahoo.com/v8/finance/chart/USDKRW=X?interval=1d&range=1d"
+        r_usd = requests.get(url_usd, headers=HEADERS, timeout=5).json()
+        meta_usd = r_usd["chart"]["result"][0]["meta"]
+        rates["USDKRW"] = float(meta_usd.get("regularMarketPrice") or meta_usd.get("previousClose"))
+    except Exception as e:
+        print(f"USD 야후 환율 실패 ({e}), 네이버로 대체 시도")
         try:
-            url = f"https://m.stock.naver.com/front-api/v1/marketIndex/prices?category=exchange&reutersCode={code}&page=1"
-            res = requests.get(url, headers=HEADERS, timeout=5).json()
-            rate_str = res["result"][0]["closePrice"].replace(",", "")
-            rates[key] = float(rate_str)
-        except Exception as e:
-            print(f"네이버 환율({key}) 수신 예외: {e}, fallback 유지")
-            
+            url_nv = "https://m.stock.naver.com/front-api/v1/marketIndex/prices?category=exchange&reutersCode=FX_USDKRW&page=1"
+            res = requests.get(url_nv, headers=HEADERS, timeout=5).json()
+            rates["USDKRW"] = float(res["result"][0]["closePrice"].replace(",", ""))
+        except:
+            pass
+
+    # 2. NOK: 네이버 금융 고시환율 (오차 없이 정확한 값)
+    try:
+        url_nok = "https://m.stock.naver.com/front-api/v1/marketIndex/prices?category=exchange&reutersCode=FX_NOKKRW&page=1"
+        res = requests.get(url_nok, headers=HEADERS, timeout=5).json()
+        rates["NOKKRW"] = float(res["result"][0]["closePrice"].replace(",", ""))
+    except Exception as e:
+        print(f"NOK 네이버 환율 실패 ({e}), fallback 유지")
+
     return rates
 
+# ─────────────────────────────────────────────
+# 주가 조회 (이전 정확했던 5일 윈도우 로직 복원)
+# ─────────────────────────────────────────────
 def get_price(symbol: str):
     try:
         url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=5d"
         r = requests.get(url, headers=HEADERS, timeout=10)
-        res_json = r.json()
-        result = res_json["chart"]["result"][0]
+        result = r.json()["chart"]["result"][0]
         meta = result["meta"]
         
-        current = meta.get("regularMarketPrice")
-        if not current:
-            current = meta.get("chartPreviousClose") or meta.get("previousClose") or 0.0
-        current = float(current)
-
-        prev_close = meta.get("chartPreviousClose") or meta.get("previousClose") or current
-        prev_close = float(prev_close)
+        current = meta.get("regularMarketPrice", 0)
+        close_prices = result.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+        valid_closes = [c for c in close_prices if c is not None]
+        
+        if len(valid_closes) >= 2:
+            prev_close = valid_closes[-2]
+        else:
+            prev_close = meta.get("previousClose") or current
 
         change_pct = ((current - prev_close) / prev_close * 100) if prev_close else 0.0
-        return {"current": current, "change_pct": change_pct}
+        return {"current": float(current), "change_pct": float(change_pct)}
     except Exception as e:
         print(f"  [{symbol}] 시세 조회 실패: {e}")
         return None
@@ -188,7 +198,7 @@ def send_kakao(message: str, token: str):
 
 def main():
     fx = get_fx_rates()
-    print(f"정상 수신 환율: USD={fx['USDKRW']:.2f}원, NOK={fx['NOKKRW']:.2f}원")
+    print(f"적용 환율: USD={fx['USDKRW']:,.2f}원, NOK={fx['NOKKRW']:,.2f}원")
     
     us_data = []
     for ticker, info in PORTFOLIO["US"].items():
@@ -211,7 +221,7 @@ def main():
         send_kakao(msg1, token)
         time.sleep(1)
         send_kakao(msg2, token)
-        print("카카오톡 메시지 전송 완료")
+        print("카카오톡 전송 완료")
 
 if __name__ == "__main__":
     main()
