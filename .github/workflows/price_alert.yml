@@ -1,37 +1,31 @@
-name: Stock Price Alert
+name: Daily Portfolio & Dividend Alert
 
 on:
   schedule:
-    # 30분마다 자동으로 실행 (원하시면 시간 간격을 수정할 수 있습니다)
-    - cron: '*/30 * * * *'
-  workflow_dispatch: # 깃허브 웹사이트에서 수동으로 테스트 실행할 수 있는 버튼 활성화
+    # UTC 20:00 = 한국 시간(KST) 매일 아침 05:00
+    - cron: '0 20 * * *'
+  workflow_dispatch: # Actions 탭에서 즉시 수동 실행 테스트 가능
 
 jobs:
   run-alert:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v3
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.10'
+          cache: 'pip'
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: |
-          pip install requests pytz
+          python -m pip install --upgrade pip
+          pip install yfinance requests
 
-      - name: Run Price Alert Script
+      - name: Run Script
         env:
-          KAKAO_ACCESS_TOKEN: ${{ secrets.KAKAO_ACCESS_TOKEN }}
+          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
           KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
-          KAKAO_CLIENT_ID: ${{ secrets.KAKAO_CLIENT_ID }}
-        run: |
-          python price_alert.py
-
-      - name: Commit state file if changed
-        uses: stefanzweifel/git-auto-commit-action@v4
-        with:
-          commit_message: "Auto-update alerted state"
-          file_pattern: "alerted_today.json"
+        run: python portfolio_alert.py
