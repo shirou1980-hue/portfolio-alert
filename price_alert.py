@@ -25,8 +25,7 @@ jobs:
 
       - name: Run Alert Script
         env:
-          KAKAO_REST_API_KEY: ${{ secrets.KAKAO_REST_API_KEY }}
+          KAKAO_CLIENT_ID: ${{ secrets.KAKAO_CLIENT_ID }}
           KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
-          KAKAO_API_KEY: ${{ secrets.KAKAO_API_KEY }}
-          REFRESH_TOKEN: ${{ secrets.REFRESH_TOKEN }}
+          KAKAO_ACCESS_TOKEN: ${{ secrets.KAKAO_ACCESS_TOKEN }}
         run: python price_alert.py
