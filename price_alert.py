@@ -7,7 +7,6 @@ import yfinance as yf
 # ==========================================
 # 1. 포트폴리오 자산 구성 및 수량 설정
 # ==========================================
-# (티커별 보유수량, 매입단가, 통화, 자산군 정의)
 PORTFOLIO = {
     # [기술 성장주 / 반도체]
     'TSM': {'name': 'TSMC', 'shares': 31, 'buy_price': 106.00, 'currency': 'USD', 'category': 'Tech'},
@@ -34,14 +33,13 @@ PORTFOLIO = {
     'AMR': {'name': '알파메탈', 'shares': 15, 'buy_price': 227.40, 'currency': 'USD', 'category': 'Commodity'}
 }
 
-# 배당소득세율 (15% 원천징수)
+# 미국 주식 원천징수 배당소득세율 (15%)
 TAX_RATE = 0.15
 
 # ==========================================
-# 2. 환율 및 시장 데이터 수집
+# 2. 환율 데이터 수집
 # ==========================================
 def get_exchange_rates():
-    """실시간 USD/KRW 및 NOK/KRW 환율 수집"""
     usd_krw = 1381.50
     nok_krw = 130.80
 
@@ -50,22 +48,21 @@ def get_exchange_rates():
         if not usd_data.empty:
             usd_krw = float(usd_data['Close'].iloc[-1])
     except Exception as e:
-        print(f"USD 환율 파싱 fallback 사용: {e}")
+        print(f"USD 환율 fallback 사용: {e}")
 
     try:
         nok_data = yf.Ticker("NOKKRW=X").history(period="1d")
         if not nok_data.empty:
             nok_krw = float(nok_data['Close'].iloc[-1])
     except Exception as e:
-        print(f"NOK 환율 파싱 fallback 사용: {e}")
+        print(f"NOK 환율 fallback 사용: {e}")
 
     return usd_krw, nok_krw
 
 # ==========================================
-# 3. 주가 및 평가손익 정산 모듈
+# 3. 주가 및 평가손익 정산
 # ==========================================
 def get_price_summary(usd_rate, nok_rate):
-    """보유 종목 현재가, 총자산 및 손익 집계"""
     total_eval_krw = 0
     total_cost_krw = 0
     price_lines = []
@@ -74,7 +71,6 @@ def get_price_summary(usd_rate, nok_rate):
         try:
             stock = yf.Ticker(ticker)
             hist = stock.history(period="2d")
-            
             if hist.empty:
                 continue
 
@@ -94,13 +90,12 @@ def get_price_summary(usd_rate, nok_rate):
             total_eval_krw += eval_krw
             total_cost_krw += cost_krw
 
-            # 종목별 한줄 요약 (주요 종목 위주)
             if ticker in ['TSM', 'ECO', 'FRO', 'NE', 'O', 'JEPI', 'NORAM.OL']:
                 sign = "+" if day_change_pct >= 0 else ""
                 price_lines.append(f"• {ticker}: {symbol}{curr_price:,.2f} ({sign}{day_change_pct:.2f}%) | 누적 {gain_pct:+.1f}%")
 
         except Exception as e:
-            print(f"[{ticker}] 시세 파싱 오류: {e}")
+            print(f"[{ticker}] 시세 수집 스킵: {e}")
 
     total_gain_krw = total_eval_krw - total_cost_krw
     total_gain_pct = (total_gain_krw / total_cost_krw * 100) if total_cost_krw > 0 else 0
@@ -113,12 +108,11 @@ def get_price_summary(usd_rate, nok_rate):
     }
 
 # ==========================================
-# 4. 배당 캘린더 정산 모듈 (Stock Events 방식)
+# 4. 배당 캘린더 (+30일 이내 필터링 적용)
 # ==========================================
 def get_dividend_calendar(usd_rate, nok_rate):
-    """배당락일(Ex-Div), 지급일(Pay Date), 세전/세후 현지통화 및 원화 계산"""
     today = datetime.now().date()
-    search_start = today - timedelta(days=7)
+    target_end = today + timedelta(days=30)  # 오늘 기준 +30일까지만 탐색
     events = []
 
     for ticker, info in PORTFOLIO.items():
@@ -130,7 +124,7 @@ def get_dividend_calendar(usd_rate, nok_rate):
             pay_date = None
             dividend_rate = 0.0
 
-            # 캘린더 객체 파싱
+            # 캘린더 속성 파싱
             if cal is not None and not (isinstance(cal, dict) and len(cal) == 0):
                 cal_dict = cal.to_dict() if hasattr(cal, 'to_dict') else (cal if isinstance(cal, dict) else {})
                 for k, v in cal_dict.items():
@@ -140,13 +134,14 @@ def get_dividend_calendar(usd_rate, nok_rate):
                     elif 'dividend date' in k_str or 'pay' in k_str:
                         pay_date = v[0] if isinstance(v, list) and v else (list(v.values())[0] if isinstance(v, dict) else v)
 
-            # 최근 배당금 이력에서 배당 단가 추출
+            # 최근 배당금 단가 보정
             divs = t.dividends
             if not divs.empty:
                 dividend_rate = float(divs.iloc[-1])
                 if ex_date is None:
                     last_ex = divs.index[-1].date()
-                    if last_ex >= search_start:
+                    # 최근 3일 이내에 막 지난 배당락일이거나 앞으로 올 배당락일인 경우
+                    if (today - timedelta(days=3)) <= last_ex <= target_end:
                         ex_date = last_ex
 
             # 날짜 표준화
@@ -160,8 +155,11 @@ def get_dividend_calendar(usd_rate, nok_rate):
             elif isinstance(pay_date, str):
                 pay_date = datetime.strptime(pay_date[:10], '%Y-%m-%d').date()
 
-            # 유효 배당 이벤트 등록
-            if dividend_rate > 0 and (ex_date or pay_date):
+            # [핵심] 오늘 기준 +30일 이내에 배당락일 또는 지급일이 들어있는 항목만 수집
+            is_valid_ex = ex_date and (today <= ex_date <= target_end)
+            is_valid_pay = pay_date and (today <= pay_date <= target_end)
+
+            if dividend_rate > 0 and (is_valid_ex or is_valid_pay):
                 shares = info['shares']
                 curr = info['currency']
                 rate = usd_rate if curr == 'USD' else nok_rate
@@ -177,20 +175,20 @@ def get_dividend_calendar(usd_rate, nok_rate):
                     'shares': shares,
                     'currency': curr,
                     'rate_per_share': dividend_rate,
-                    'ex_date': ex_date,
-                    'pay_date': pay_date,
+                    'ex_date': ex_date if is_valid_ex else None,
+                    'pay_date': pay_date if is_valid_pay else None,
                     'pre_tax_native': pre_tax_native,
                     'post_tax_native': post_tax_native,
                     'pre_tax_krw': pre_tax_krw,
                     'post_tax_krw': post_tax_krw,
                 })
         except Exception as e:
-            print(f"[{ticker}] 배당 파싱 스킵: {e}")
+            print(f"[{ticker}] 배당 데이터 파싱 스킵: {e}")
 
     return events
 
 # ==========================================
-# 5. 최종 카카오톡 브리핑 메시지 조합
+# 5. 브리핑 메시지 조합
 # ==========================================
 def build_combined_message(price_data, div_events, usd_rate, nok_rate):
     now_str = datetime.now().strftime('%Y-%m-%d')
@@ -206,9 +204,9 @@ def build_combined_message(price_data, div_events, usd_rate, nok_rate):
     ]
     lines.extend(price_data['lines'])
     lines.append("------------------------------------")
-    lines.append("📅 [다가오는 배당 캘린더]")
+    lines.append("📅 [향후 30일 이내 배당 캘린더]")
 
-    # 배당락일 기준 정렬
+    # 배당락일 기준
     ex_events = [e for e in div_events if e['ex_date']]
     ex_events.sort(key=lambda x: x['ex_date'])
 
@@ -222,13 +220,13 @@ def build_combined_message(price_data, div_events, usd_rate, nok_rate):
                 f"  - 세후: {sym}{e['post_tax_native']:,.2f} ({e['post_tax_krw']:,.0f}원)"
             )
     else:
-        lines.append("• 최근 예정된 배당락일이 없습니다.")
+        lines.append("• 향후 30일 이내 예정된 배당락일이 없습니다.")
 
-    # 배당지급일 기준 정렬
+    # 배당지급일 기준
     pay_events = [e for e in div_events if e['pay_date']]
     pay_events.sort(key=lambda x: x['pay_date'])
 
-    lines.append("\n💵 [지급 예정 배당금]")
+    lines.append("\n💵 [향후 30일 이내 지급 예정액]")
     total_post_krw = 0
     if pay_events:
         for e in pay_events:
@@ -236,40 +234,50 @@ def build_combined_message(price_data, div_events, usd_rate, nok_rate):
             lines.append(f"• {e['pay_date'].strftime('%m/%d')} {e['ticker']}: {sym}{e['post_tax_native']:,.2f} (세후 {e['post_tax_krw']:,.0f}원)")
             total_post_krw += e['post_tax_krw']
     else:
+        # 배당락 기준 세후 환산합 대체
         total_post_krw = sum(e['post_tax_krw'] for e in ex_events)
-        lines.append("• 공식 지급일 공시 대기 (배당락 기준 추적)")
+        lines.append("• 공식 지급일 발표 대기 중 (배당락 기준 추적)")
 
     lines.append("------------------------------------")
-    lines.append(f"🎯 잔여/예정 세후 배당합계: 약 {total_post_krw:,.0f}원")
+    lines.append(f"🎯 30일 내 세후 예상 배당합: 약 {total_post_krw:,.0f}원")
 
     return "\n".join(lines)
 
 # ==========================================
-# 6. 카카오톡 '나에게 보내기' 발송 함수
+# 6. 카카오톡 발송 모듈 (다중 키 이름 호환)
 # ==========================================
 def send_kakao_message(text):
-    rest_api_key = os.environ.get("KAKAO_REST_API_KEY")
-    refresh_token = os.environ.get("KAKAO_REFRESH_TOKEN")
+    # 등록 가능한 다양한 변수명 지원
+    rest_api_key = (
+        os.environ.get("KAKAO_REST_API_KEY") or 
+        os.environ.get("KAKAO_API_KEY") or 
+        os.environ.get("REST_API_KEY")
+    )
+    refresh_token = (
+        os.environ.get("KAKAO_REFRESH_TOKEN") or 
+        os.environ.get("REFRESH_TOKEN")
+    )
 
     if not rest_api_key or not refresh_token:
-        print("카카오 API 인증 환경변수가 등록되어 있지 않습니다.")
+        print("❌ 카카오 API 인증 환경변수가 등록되어 있지 않습니다.")
+        print(f"현재 등록된 Key 확인: REST_KEY={bool(rest_api_key)}, REFRESH_TOKEN={bool(refresh_token)}")
         return
 
-    # Refresh Token으로 Access Token 갱신
+    # Refresh Token으로 Access Token 발급
     token_url = "https://kauth.kakao.com/oauth/token"
     token_data = {
         "grant_type": "refresh_token",
-        "client_id": rest_api_key,
-        "refresh_token": refresh_token
+        "client_id": rest_api_key.strip(),
+        "refresh_token": refresh_token.strip()
     }
     t_res = requests.post(token_url, data=token_data).json()
     access_token = t_res.get("access_token")
 
     if not access_token:
-        print(f"토큰 갱신 실패: {t_res}")
+        print(f"❌ 카카오 Access Token 갱신 실패: {t_res}")
         return
 
-    # 나에게 보내기 API 호출
+    # 메시지 전송
     send_url = "https://kapi.kakao.com/v2/api/talk/memo/default/send"
     headers = {"Authorization": f"Bearer {access_token}"}
     payload = {
@@ -286,12 +294,12 @@ def send_kakao_message(text):
 
     res = requests.post(send_url, headers=headers, data=payload)
     if res.status_code == 200 and res.json().get("result_code") == 0:
-        print("✅ 카카오톡 통합 포트폴리오/배당 알림 발송 성공!")
+        print("✅ 카카오톡 모닝 브리핑 발송 성공!")
     else:
-        print(f"❌ 발송 실패: {res.status_code}, {res.text}")
+        print(f"❌ 카카오톡 발송 실패: {res.status_code}, {res.text}")
 
 # ==========================================
-# 메인 실행부
+# 메인 함수
 # ==========================================
 if __name__ == "__main__":
     usd_rate, nok_rate = get_exchange_rates()
