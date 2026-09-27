@@ -1,191 +1,303 @@
-from datetime import datetime
-import json
 import os
-import time
-import pytz
+import json
+from datetime import datetime, timedelta
 import requests
+import yfinance as yf
 
-# ─────────────────────────────────────────────
-# 포트폴리오 정의 (보유 종목 리스트)
-# ─────────────────────────────────────────────
+# ==========================================
+# 1. 포트폴리오 자산 구성 및 수량 설정
+# ==========================================
+# (티커별 보유수량, 매입단가, 통화, 자산군 정의)
 PORTFOLIO = {
-    "US": {
-        "RIG": {"name": "트랜스오션", "shares": 1010, "book_krw": 5985238},
-        "FRO": {"name": "프론트라인", "shares": 557, "book_krw": 12949963},
-        "NE": {"name": "노블", "shares": 194, "book_krw": 7917634},
-        "DHT": {"name": "DHT 홀딩스", "shares": 392, "book_krw": 6374446},
-        "ECO": {
-            "name": "오케아니스 에코 탱커스",
-            "shares": 301,
-            "book_krw": 13744964,
-        },
-        "AMR": {
-            "name": "알파 메탈러지컬 리소시스",
-            "shares": 23,
-            "book_krw": 6796637,
-        },
-        "FLNC": {"name": "플루언스 에너지", "shares": 150, "book_krw": 4894012},
-        "QYLD": {
-            "name": "글로벌엑스 커버드콜 ETF",
-            "shares": 1664,
-            "book_krw": 39862339,
-        },
-        "JEPI": {
-            "name": "JP모건 에쿼티 프리미엄",
-            "shares": 200,
-            "book_krw": 15499533,
-        },
-        "NVTS": {"name": "나비타스 세미컨덕터", "shares": 193, "book_krw": 9287727},
-        "NOK": {"name": "노키아 ADR", "shares": 22, "book_krw": 551503},
-        "O": {"name": "리얼티 인컴", "shares": 600, "book_krw": 45211927},
-        "SKHY": {"name": "SK하이닉스 ADR", "shares": 50, "book_krw": 9766891},
-        "TSM": {"name": "TSMC", "shares": 31, "book_krw": 4067434},
-        "HCC": {"name": "워리어 멧 콜", "shares": 51, "book_krw": 6552941},
-    },
-    "NO": {
-        "PLSV.OL": {
-            "name": "파라투스 에너지 서비시스",
-            "shares": 2231,
-            "book_krw": 10913955,
-        },
-        "SEA1.OL": {"name": "시1 오프쇼어", "shares": 7054, "book_krw": 21859180},
-        "NORAM.OL": {
-            "name": "Noram Drilling AS",
-            "shares": 6514,
-            "book_krw": 31673808,
-        },
-        "WAWI.OL": {
-            "name": "WALLENIUS WILHELMSEN",
-            "shares": 125,
-            "book_krw": 2435832,
-        },
-        "VAR.OL": {"name": "VR ENERGY AS", "shares": 612, "book_krw": 4455915},
-        "DOFG.OL": {"name": "DOF Group ASA", "shares": 754, "book_krw": 10871813},
-    },
+    # [기술 성장주 / 반도체]
+    'TSM': {'name': 'TSMC', 'shares': 31, 'buy_price': 106.00, 'currency': 'USD', 'category': 'Tech'},
+    'RDDT': {'name': '레딧', 'shares': 32, 'buy_price': 140.10, 'currency': 'USD', 'category': 'Tech'},
+    
+    # [원유 탱커 / 시클리컬]
+    'ECO': {'name': '오케아니스', 'shares': 350, 'buy_price': 32.00, 'currency': 'USD', 'category': 'Tanker'},
+    'FRO': {'name': '프론트라인', 'shares': 546, 'buy_price': 16.98, 'currency': 'USD', 'category': 'Tanker'},
+    'DHT': {'name': 'DHT홀딩스', 'shares': 200, 'buy_price': 10.50, 'currency': 'USD', 'category': 'Tanker'},
+    
+    # [해상 시추 / 오프쇼어]
+    'NE': {'name': '노블', 'shares': 200, 'buy_price': 29.00, 'currency': 'USD', 'category': 'Drilling'},
+    'NORAM.OL': {'name': '노람드릴링', 'shares': 1387, 'buy_price': 38.50, 'currency': 'NOK', 'category': 'Drilling'},
+    'DOFG.OL': {'name': 'DOF그룹', 'shares': 200, 'buy_price': 95.00, 'currency': 'NOK', 'category': 'Drilling'},
+    
+    # [고배당 인컴 / 리츠 / 배당성장]
+    'O': {'name': '리얼티인컴', 'shares': 600, 'buy_price': 52.80, 'currency': 'USD', 'category': 'Income'},
+    'JEPI': {'name': 'JP모건고배당', 'shares': 200, 'buy_price': 56.90, 'currency': 'USD', 'category': 'Income'},
+    'QYLD': {'name': '나스닥커버드콜', 'shares': 1664, 'buy_price': 17.80, 'currency': 'USD', 'category': 'Income'},
+    'DGRO': {'name': '배당성장ETF', 'shares': 51, 'buy_price': 35.60, 'currency': 'USD', 'category': 'Income'},
+    
+    # [원자재 완충 자산]
+    'HCC': {'name': '워리어멧콜', 'shares': 50, 'buy_price': 97.20, 'currency': 'USD', 'category': 'Commodity'},
+    'AMR': {'name': '알파메탈', 'shares': 15, 'buy_price': 227.40, 'currency': 'USD', 'category': 'Commodity'}
 }
 
-THRESHOLD = 5.0  # 알람 기준 변동률 (5%)
-STATE_FILE = "alerted_today.json"
+# 배당소득세율 (15% 원천징수)
+TAX_RATE = 0.15
 
-KAKAO_ACCESS_TOKEN = os.environ.get("KAKAO_ACCESS_TOKEN", "")
-KAKAO_REFRESH_TOKEN = os.environ.get("KAKAO_REFRESH_TOKEN", "")
-KAKAO_CLIENT_ID = os.environ.get("KAKAO_CLIENT_ID", "")
+# ==========================================
+# 2. 환율 및 시장 데이터 수집
+# ==========================================
+def get_exchange_rates():
+    """실시간 USD/KRW 및 NOK/KRW 환율 수집"""
+    usd_krw = 1381.50
+    nok_krw = 130.80
 
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-}
-
-
-def refresh_kakao_token():
-  if not KAKAO_REFRESH_TOKEN or not KAKAO_CLIENT_ID:
-    return KAKAO_ACCESS_TOKEN
-  try:
-    r = requests.post(
-        "https://kauth.kakao.com/oauth/token",
-        data={
-            "grant_type": "refresh_token",
-            "client_id": KAKAO_CLIENT_ID,
-            "refresh_token": KAKAO_REFRESH_TOKEN,
-        },
-        timeout=10,
-    )
-    return r.json().get("access_token", KAKAO_ACCESS_TOKEN)
-  except:
-    return KAKAO_ACCESS_TOKEN
-
-
-def get_stock_change(symbol: str):
-  try:
-    url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?interval=1d&range=1d"
-    res = requests.get(url, headers=HEADERS, timeout=10).json()
-    meta = res["chart"]["result"][0]["meta"]
-    current = float(meta.get("regularMarketPrice", 0.0))
-    prev_close = float(
-        meta.get("previousClose") or meta.get("chartPreviousClose", current)
-    )
-    change_pct = ((current - prev_close) / prev_close * 100) if prev_close else 0.0
-    return current, change_pct
-  except Exception as e:
-    print(f"[{symbol}] 조회 실패: {e}")
-    return None, None
-
-
-def load_alerted_state(today_str):
-  if os.path.exists(STATE_FILE):
     try:
-      with open(STATE_FILE, "r", encoding="utf-8") as f:
-        data = json.load(f)
-        if data.get("date") == today_str:
-          return data.get("alerted", [])
-    except:
-      pass
-  return []
+        usd_data = yf.Ticker("USDKRW=X").history(period="1d")
+        if not usd_data.empty:
+            usd_krw = float(usd_data['Close'].iloc[-1])
+    except Exception as e:
+        print(f"USD 환율 파싱 fallback 사용: {e}")
 
+    try:
+        nok_data = yf.Ticker("NOKKRW=X").history(period="1d")
+        if not nok_data.empty:
+            nok_krw = float(nok_data['Close'].iloc[-1])
+    except Exception as e:
+        print(f"NOK 환율 파싱 fallback 사용: {e}")
 
-def save_alerted_state(today_str, alerted_list):
-  with open(STATE_FILE, "w", encoding="utf-8") as f:
-    json.dump({"date": today_str, "alerted": alerted_list}, f)
+    return usd_krw, nok_krw
 
+# ==========================================
+# 3. 주가 및 평가손익 정산 모듈
+# ==========================================
+def get_price_summary(usd_rate, nok_rate):
+    """보유 종목 현재가, 총자산 및 손익 집계"""
+    total_eval_krw = 0
+    total_cost_krw = 0
+    price_lines = []
 
-def send_kakao(message: str, token: str):
-  template = {"object_type": "text", "text": message}
-  requests.post(
-      "https://kapi.kakao.com/v2/api/talk/memo/default/send",
-      headers={
-          "Authorization": f"Bearer {token}",
-          "Content-Type": "application/x-www-form-urlencoded",
-      },
-      data={"template_object": json.dumps(template, ensure_ascii=False)},
-      timeout=10,
-  )
+    for ticker, info in PORTFOLIO.items():
+        try:
+            stock = yf.Ticker(ticker)
+            hist = stock.history(period="2d")
+            
+            if hist.empty:
+                continue
 
+            curr_price = float(hist['Close'].iloc[-1])
+            prev_price = float(hist['Close'].iloc[-2]) if len(hist) >= 2 else curr_price
+            day_change_pct = ((curr_price - prev_price) / prev_price) * 100
 
-def main():
-  kst = pytz.timezone("Asia/Seoul")
-  now_dt = datetime.now(kst)
-  today_str = now_dt.strftime("%Y-%m-%d")
-  now_time_str = now_dt.strftime("%m/%d %H:%M")
+            shares = info['shares']
+            buy_price = info['buy_price']
+            rate = usd_rate if info['currency'] == 'USD' else nok_rate
+            symbol = "$" if info['currency'] == 'USD' else "kr"
 
-  alerted_list = load_alerted_state(today_str)
-  new_alerts = []
+            eval_krw = curr_price * shares * rate
+            cost_krw = buy_price * shares * rate
+            gain_pct = ((curr_price - buy_price) / buy_price) * 100
 
-  all_stocks = []
-  for ticker, info in PORTFOLIO["US"].items():
-    all_stocks.append((ticker, info, "US"))
-  for ticker, info in PORTFOLIO["NO"].items():
-    all_stocks.append((ticker, info, "NO"))
+            total_eval_krw += eval_krw
+            total_cost_krw += cost_krw
 
-  for ticker, info, market in all_stocks:
-    time.sleep(0.1)
-    clean_ticker = ticker.replace(".OL", "")
+            # 종목별 한줄 요약 (주요 종목 위주)
+            if ticker in ['TSM', 'ECO', 'FRO', 'NE', 'O', 'JEPI', 'NORAM.OL']:
+                sign = "+" if day_change_pct >= 0 else ""
+                price_lines.append(f"• {ticker}: {symbol}{curr_price:,.2f} ({sign}{day_change_pct:.2f}%) | 누적 {gain_pct:+.1f}%")
 
-    if clean_ticker in alerted_list:
-      continue
+        except Exception as e:
+            print(f"[{ticker}] 시세 파싱 오류: {e}")
 
-    current, change_pct = get_stock_change(ticker)
-    if current is not None and abs(change_pct) >= THRESHOLD:
-      direction = "급등 🚀" if change_pct > 0 else "급락 📉"
-      arrow_str = "🔺" if change_pct > 0 else "🔻"
+    total_gain_krw = total_eval_krw - total_cost_krw
+    total_gain_pct = (total_gain_krw / total_cost_krw * 100) if total_cost_krw > 0 else 0
 
-      msg = (
-          f"🚨 [주가 변동 경고] ({now_time_str})\n"
-          f"────────────────\n"
-          f"[{clean_ticker}] {info['name']}\n"
-          f"• 변동률: {arrow_str}{change_pct:.2f}% ({direction})\n"
-          f"• 현재가: {current:,.2f} ({market})\n"
-          f"• 보유수량: {info['shares']:,}주"
-      )
+    return {
+        'eval_krw': total_eval_krw,
+        'gain_krw': total_gain_krw,
+        'gain_pct': total_gain_pct,
+        'lines': price_lines
+    }
 
-      token = refresh_kakao_token()
-      if token:
-        send_kakao(msg, token)
-        print(f"알림 전송 완료: {clean_ticker} ({change_pct:.2f}%)")
-        alerted_list.append(clean_ticker)
-        new_alerts.append(clean_ticker)
-        time.sleep(1)
+# ==========================================
+# 4. 배당 캘린더 정산 모듈 (Stock Events 방식)
+# ==========================================
+def get_dividend_calendar(usd_rate, nok_rate):
+    """배당락일(Ex-Div), 지급일(Pay Date), 세전/세후 현지통화 및 원화 계산"""
+    today = datetime.now().date()
+    search_start = today - timedelta(days=7)
+    events = []
 
-  save_alerted_state(today_str, alerted_list)
+    for ticker, info in PORTFOLIO.items():
+        try:
+            t = yf.Ticker(ticker)
+            cal = t.calendar
 
+            ex_date = None
+            pay_date = None
+            dividend_rate = 0.0
 
+            # 캘린더 객체 파싱
+            if cal is not None and not (isinstance(cal, dict) and len(cal) == 0):
+                cal_dict = cal.to_dict() if hasattr(cal, 'to_dict') else (cal if isinstance(cal, dict) else {})
+                for k, v in cal_dict.items():
+                    k_str = str(k).lower()
+                    if 'ex-dividend' in k_str or 'ex dividend' in k_str:
+                        ex_date = v[0] if isinstance(v, list) and v else (list(v.values())[0] if isinstance(v, dict) else v)
+                    elif 'dividend date' in k_str or 'pay' in k_str:
+                        pay_date = v[0] if isinstance(v, list) and v else (list(v.values())[0] if isinstance(v, dict) else v)
+
+            # 최근 배당금 이력에서 배당 단가 추출
+            divs = t.dividends
+            if not divs.empty:
+                dividend_rate = float(divs.iloc[-1])
+                if ex_date is None:
+                    last_ex = divs.index[-1].date()
+                    if last_ex >= search_start:
+                        ex_date = last_ex
+
+            # 날짜 표준화
+            if ex_date and hasattr(ex_date, 'date'):
+                ex_date = ex_date.date()
+            elif isinstance(ex_date, str):
+                ex_date = datetime.strptime(ex_date[:10], '%Y-%m-%d').date()
+
+            if pay_date and hasattr(pay_date, 'date'):
+                pay_date = pay_date.date()
+            elif isinstance(pay_date, str):
+                pay_date = datetime.strptime(pay_date[:10], '%Y-%m-%d').date()
+
+            # 유효 배당 이벤트 등록
+            if dividend_rate > 0 and (ex_date or pay_date):
+                shares = info['shares']
+                curr = info['currency']
+                rate = usd_rate if curr == 'USD' else nok_rate
+
+                pre_tax_native = dividend_rate * shares
+                post_tax_native = pre_tax_native * (1 - TAX_RATE)
+                pre_tax_krw = pre_tax_native * rate
+                post_tax_krw = post_tax_native * rate
+
+                events.append({
+                    'ticker': ticker,
+                    'name': info['name'],
+                    'shares': shares,
+                    'currency': curr,
+                    'rate_per_share': dividend_rate,
+                    'ex_date': ex_date,
+                    'pay_date': pay_date,
+                    'pre_tax_native': pre_tax_native,
+                    'post_tax_native': post_tax_native,
+                    'pre_tax_krw': pre_tax_krw,
+                    'post_tax_krw': post_tax_krw,
+                })
+        except Exception as e:
+            print(f"[{ticker}] 배당 파싱 스킵: {e}")
+
+    return events
+
+# ==========================================
+# 5. 최종 카카오톡 브리핑 메시지 조합
+# ==========================================
+def build_combined_message(price_data, div_events, usd_rate, nok_rate):
+    now_str = datetime.now().strftime('%Y-%m-%d')
+    lines = [
+        f"📊 [모닝 포트폴리오 & 배당 브리핑]",
+        f"일자: {now_str} (오전 05:00 KST)",
+        f"환율: USD {usd_rate:,.1f}원 | NOK {nok_rate:,.1f}원",
+        "------------------------------------",
+        f"💰 총 자산: 약 {price_data['eval_krw'] / 100000000:.2f}억 원",
+        f"📈 총 손익: {price_data['gain_krw'] / 100000000:+.2f}억 원 ({price_data['gain_pct']:+.1f}%)",
+        "------------------------------------",
+        "📌 [주요 종목 시세 마감]"
+    ]
+    lines.extend(price_data['lines'])
+    lines.append("------------------------------------")
+    lines.append("📅 [다가오는 배당 캘린더]")
+
+    # 배당락일 기준 정렬
+    ex_events = [e for e in div_events if e['ex_date']]
+    ex_events.sort(key=lambda x: x['ex_date'])
+
+    if ex_events:
+        for e in ex_events:
+            sym = "$" if e['currency'] == 'USD' else "NOK "
+            lines.append(
+                f"• {e['ex_date'].strftime('%m/%d')} [배당락] {e['ticker']} ({e['name']})\n"
+                f"  - 주당 {sym}{e['rate_per_share']:.2f} × {e['shares']:,}주\n"
+                f"  - 세전: {sym}{e['pre_tax_native']:,.2f} ({e['pre_tax_krw']:,.0f}원)\n"
+                f"  - 세후: {sym}{e['post_tax_native']:,.2f} ({e['post_tax_krw']:,.0f}원)"
+            )
+    else:
+        lines.append("• 최근 예정된 배당락일이 없습니다.")
+
+    # 배당지급일 기준 정렬
+    pay_events = [e for e in div_events if e['pay_date']]
+    pay_events.sort(key=lambda x: x['pay_date'])
+
+    lines.append("\n💵 [지급 예정 배당금]")
+    total_post_krw = 0
+    if pay_events:
+        for e in pay_events:
+            sym = "$" if e['currency'] == 'USD' else "NOK "
+            lines.append(f"• {e['pay_date'].strftime('%m/%d')} {e['ticker']}: {sym}{e['post_tax_native']:,.2f} (세후 {e['post_tax_krw']:,.0f}원)")
+            total_post_krw += e['post_tax_krw']
+    else:
+        total_post_krw = sum(e['post_tax_krw'] for e in ex_events)
+        lines.append("• 공식 지급일 공시 대기 (배당락 기준 추적)")
+
+    lines.append("------------------------------------")
+    lines.append(f"🎯 잔여/예정 세후 배당합계: 약 {total_post_krw:,.0f}원")
+
+    return "\n".join(lines)
+
+# ==========================================
+# 6. 카카오톡 '나에게 보내기' 발송 함수
+# ==========================================
+def send_kakao_message(text):
+    rest_api_key = os.environ.get("KAKAO_REST_API_KEY")
+    refresh_token = os.environ.get("KAKAO_REFRESH_TOKEN")
+
+    if not rest_api_key or not refresh_token:
+        print("카카오 API 인증 환경변수가 등록되어 있지 않습니다.")
+        return
+
+    # Refresh Token으로 Access Token 갱신
+    token_url = "https://kauth.kakao.com/oauth/token"
+    token_data = {
+        "grant_type": "refresh_token",
+        "client_id": rest_api_key,
+        "refresh_token": refresh_token
+    }
+    t_res = requests.post(token_url, data=token_data).json()
+    access_token = t_res.get("access_token")
+
+    if not access_token:
+        print(f"토큰 갱신 실패: {t_res}")
+        return
+
+    # 나에게 보내기 API 호출
+    send_url = "https://kapi.kakao.com/v2/api/talk/memo/default/send"
+    headers = {"Authorization": f"Bearer {access_token}"}
+    payload = {
+        "template_object": json.dumps({
+            "object_type": "text",
+            "text": text,
+            "link": {
+                "web_url": "https://finance.yahoo.com",
+                "mobile_web_url": "https://finance.yahoo.com"
+            },
+            "button_title": "증시 확인"
+        })
+    }
+
+    res = requests.post(send_url, headers=headers, data=payload)
+    if res.status_code == 200 and res.json().get("result_code") == 0:
+        print("✅ 카카오톡 통합 포트폴리오/배당 알림 발송 성공!")
+    else:
+        print(f"❌ 발송 실패: {res.status_code}, {res.text}")
+
+# ==========================================
+# 메인 실행부
+# ==========================================
 if __name__ == "__main__":
-  main()
+    usd_rate, nok_rate = get_exchange_rates()
+    price_data = get_price_summary(usd_rate, nok_rate)
+    div_events = get_dividend_calendar(usd_rate, nok_rate)
+    final_message = build_combined_message(price_data, div_events, usd_rate, nok_rate)
+    
+    print(final_message)
+    send_kakao_message(final_message)
