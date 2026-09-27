@@ -300,4 +300,71 @@ if __name__ == "__main__":
     final_message = build_combined_message(price_data, div_events, usd_rate, nok_rate)
     
     print(final_message)
-    send_kakao_message(final_message)
+   # ==========================================
+# 6. 카카오톡 발송 모듈 (디버깅 및 폴백 강화)
+# ==========================================
+def send_kakao_message(text):
+    client_id = os.environ.get("KAKAO_CLIENT_ID") or os.environ.get("KAKAO_REST_API_KEY")
+    refresh_token = os.environ.get("KAKAO_REFRESH_TOKEN")
+    access_token = os.environ.get("KAKAO_ACCESS_TOKEN")
+
+    print("\n--- [카카오 인증 상태 점검] ---")
+    print(f"CLIENT_ID 존재: {bool(client_id)}, REFRESH_TOKEN 존재: {bool(refresh_token)}, ACCESS_TOKEN 존재: {bool(access_token)}")
+
+    # 1. Refresh Token으로 새 Access Token 갱신 시도
+    if client_id and refresh_token:
+        token_url = "https://kauth.kakao.com/oauth/token"
+        token_data = {
+            "grant_type": "refresh_token",
+            "client_id": client_id.strip(),
+            "refresh_token": refresh_token.strip()
+        }
+        headers = {"Content-Type": "application/x-www-form-urlencoded"}
+        try:
+            res = requests.post(token_url, data=token_data, headers=headers)
+            t_res = res.json()
+            print(f"토큰 갱신 응답 결과: {t_res}")
+            
+            if "access_token" in t_res:
+                access_token = t_res["access_token"]
+                print(">> 새 Access Token 갱신 성공!")
+            else:
+                print(f">> 토큰 갱신 실패 사유: {t_res.get('error_description', t_res)}")
+        except Exception as e:
+            print(f"토큰 갱신 요청 중 예외 발생: {e}")
+
+    # 2. 갱신 실패 시 Secrets에 있는 기본 ACCESS_TOKEN 사용
+    if not access_token:
+        print("❌ 유효한 카카오 Access Token을 확보하지 못했습니다.")
+        return
+
+    # 3. 나에게 메시지 보내기 요청
+    send_url = "https://kapi.kakao.com/v2/api/talk/memo/default/send"
+    send_headers = {
+        "Authorization": f"Bearer {access_token.strip()}",
+        "Content-Type": "application/x-www-form-urlencoded"
+    }
+    
+    # 텍스트 메시지 템플릿
+    template = {
+        "object_type": "text",
+        "text": text,
+        "link": {
+            "web_url": "https://finance.yahoo.com",
+            "mobile_web_url": "https://finance.yahoo.com"
+        },
+        "button_title": "증시 확인"
+    }
+    
+    payload = {"template_object": json.dumps(template, ensure_ascii=False)}
+    
+    res = requests.post(send_url, headers=send_headers, data=payload)
+    try:
+        res_json = res.json()
+    except:
+        res_json = res.text
+
+    if res.status_code == 200 and isinstance(res_json, dict) and res_json.get("result_code") == 0:
+        print("✅ 카카오톡 모닝 브리핑 발송 성공!")
+    else:
+        print(f"❌ 카카오톡 발송 실패: HTTP {res.status_code}, 응답: {res_json}")
