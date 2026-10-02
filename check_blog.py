@@ -3,9 +3,9 @@ import json
 import requests
 import feedparser
 
-# 감시할 네이버 블로그 아이디 목록 (원하는 아이디로 변경)
+# 감시할 블로그 아이디
 BLOG_IDS = [
-    "changed_value",
+     "changed_value",
     "startale-",
     "blissfulnara",
     "dodo2020_",
@@ -14,38 +14,40 @@ BLOG_IDS = [
     "gafield8785",
     "martin332",
     "usforall",
-    "doctordk"
-   "firelifestyle"
-    "thingschange_"
-    "hoki_investing_labs"
-    "bigpicture-storage"
-    "07leader"
-    "highk27"
-    "bambooinvesting"
-    "rnjs1016k"
-   "hwasikyuljeon"
-   "opushk"
-   "chacha36"
-   "avarter"
-   "ydygod2000"
-   "iam_510"
-   "kimsinvest"
-  "cashcat_90"
-  "hhhhnk"
-  "noshortcut_life"
-  "md21_vroom"
-  "onion_asset"
-  "limsk1212"
-  "tosoha1"
-  "kmsmir04"
-  "cybermw"
-  "shimseok12"
-    "junsa26"
-    "sungdory"
+    "doctordk",
+   "firelifestyle",
+    "thingschange_",
+    "hoki_investing_labs",
+    "bigpicture-storage",
+    "07leader",
+    "highk27",
+    "bambooinvesting",
+    "rnjs1016k",
+   "hwasikyuljeon",
+   "opushk",
+   "chacha36",
+   "avarter",
+   "ydygod2000",
+   "iam_510",
+   "kimsinvest",
+  "cashcat_90",
+  "hhhhnk",
+  "noshortcut_life",
+  "md21_vroom",
+  "onion_asset",
+  "limsk1212",
+  "tosoha1",
+  "kmsmir04",
+  "cybermw",
+  "shimseok12",
+    "junsa26",
+    "sungdory",
 ]
 
 CACHE_FILE = "sent_posts.json"
-REST_API_KEY = os.environ.get("KAKAO_REST_KEY")
+
+# 저장소에 등록된 키를 찾음 (KAKAO_REST_KEY 또는 KAKAO_CLIENT_ID)
+REST_API_KEY = os.environ.get("KAKAO_REST_KEY") or os.environ.get("KAKAO_CLIENT_ID")
 REFRESH_TOKEN = os.environ.get("KAKAO_REFRESH_TOKEN")
 
 def refresh_kakao_token():
@@ -57,6 +59,12 @@ def refresh_kakao_token():
     }
     resp = requests.post(url, data=data)
     result = resp.json()
+    
+    # 실패 시 상세 원인 콘솔 출력
+    if "access_token" not in result:
+        print(f"❌ 카카오 응답 상세 에러: {result}")
+        return None
+        
     return result.get("access_token")
 
 def send_kakao_memo(access_token, title, link, author):
@@ -65,7 +73,7 @@ def send_kakao_memo(access_token, title, link, author):
     
     template_object = {
         "object_type": "text",
-        "text": f"📢 [{author}] 새 블로그 글 등록\n\n{title}",
+        "text": f"📢 [{author}] 새 블로그 글\n\n{title}",
         "link": {
             "web_url": link,
             "mobile_web_url": link
@@ -75,9 +83,13 @@ def send_kakao_memo(access_token, title, link, author):
     
     data = {"template_object": json.dumps(template_object)}
     resp = requests.post(url, headers=headers, data=data)
-    print(f"[{author}] 카카오톡 전송 결과: {resp.status_code}")
+    print(f"[{author}] 카카오 전송 상태코드: {resp.status_code}")
 
 def main():
+    if not REST_API_KEY or not REFRESH_TOKEN:
+        print("❌ KAKAO_REST_KEY 또는 KAKAO_REFRESH_TOKEN 환경변수가 없습니다. GitHub Secrets를 확인하세요.")
+        return
+
     if os.path.exists(CACHE_FILE):
         with open(CACHE_FILE, "r", encoding="utf-8") as f:
             try:
@@ -96,7 +108,6 @@ def main():
         if not feed.entries:
             continue
 
-        # 최신 글 3개 대조
         for entry in feed.entries[:3]:
             post_link = entry.link
             post_title = entry.title
@@ -109,13 +120,12 @@ def main():
         print(f"새로운 글 발견: {len(new_posts)}개")
         token = refresh_kakao_token()
         if not token:
-            print("카카오 토큰 갱신 실패! REFRESH_TOKEN 값을 점검하세요.")
+            print("토큰 갱신 실패로 전송을 중단합니다.")
             return
 
         for blog_id, title, link in new_posts:
             send_kakao_memo(token, title, link, blog_id)
 
-        # 발송 완료된 링크 저장
         with open(CACHE_FILE, "w", encoding="utf-8") as f:
             json.dump(list(sent_posts), f, ensure_ascii=False, indent=2)
     else:
