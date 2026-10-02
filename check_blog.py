@@ -41,7 +41,7 @@ BLOG_IDS = [
   "cybermw",
   "shimseok12",
     "junsa26",
-    "sungdory",
+    "sungdory"
 ]
 
 CACHE_FILE = "sent_posts.json"
