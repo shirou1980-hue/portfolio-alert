@@ -1,4 +1,36 @@
-- name: Commit and push changes
+name: Naver Blog Monitor
+
+on:
+  schedule:
+    # 15분마다 자동 실행
+    - cron: '*/15 * * * *'
+  # GitHub 웹에서 수동 실행(Run workflow 버튼) 지원
+  workflow_dispatch:
+
+jobs:
+  check-blogs:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Run blog monitor
+        env:
+          KAKAO_REST_KEY: ${{ secrets.KAKAO_REST_KEY }}
+          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
+        run: |
+          python check_blog.py
+
+      - name: Commit and push changes
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
