@@ -1,39 +1,11 @@
-name: Naver Blog Monitor
-
-on:
-  schedule:
-    # 15분마다 자동 실행
-    - cron: '*/15 * * * *'
-  # GitHub 웹에서 수동 실행 지원
-  workflow_dispatch:
-
-jobs:
-  check-blogs:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-
-      - name: Run blog monitor
-        env:
-          KAKAO_REST_KEY: ${{ secrets.KAKAO_REST_KEY }}
-          KAKAO_REFRESH_TOKEN: ${{ secrets.KAKAO_REFRESH_TOKEN }}
-        run: |
-          python check_blog.py
-
-      - name: Commit and push changes
+- name: Commit and push changes
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add sent_posts.json
-          git commit -m "chore: update sent posts cache [skip ci]" || exit 0
-          git push
+          if [ -f sent_posts.json ]; then
+            git add sent_posts.json
+            git commit -m "chore: update sent posts cache [skip ci]" || exit 0
+            git push
+          else
+            echo "sent_posts.json 파일이 없어 커밋을 건너뜁니다."
+          fi
